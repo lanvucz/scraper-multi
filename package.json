@@ -1,0 +1,19 @@
+{
+  "name": "scrapers",
+  "version": "0.0.1",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "prettify": "prettier --write \"{vnthuquan/*.js,ebscohost/*.js}\"",
+    "vnthuquan": "node vnthuquan/index.js"
+  },
+  "dependencies": {
+    "got-scraping": "^3.2.12",
+    "cheerio": "^1.0.0-rc.12",
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "prettier": "^2.8.7"
+  }
+}

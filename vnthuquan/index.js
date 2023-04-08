@@ -4,8 +4,13 @@ const cheerio = require("cheerio");
 const os = require('os');
 const path = require('path');
 const minimist = require('minimist');
-let debug = false;
 
+
+let debug = false;
+let requestOptions = {
+    retry: {limit: 5},
+    timeout: { request: 120000 }
+}
 
 const host = 'http://vietnamthuquan.eu';
 const HeaderPagination = {
@@ -78,17 +83,6 @@ function getDetailUrl(contentType) {
     return `${host}/truyen/chuonghoi_${contentType}.aspx?&rand=${rand}`;
 }
 
-// async function requestRetryHandler(err, fn, retry) {
-//
-//
-//     if ((err.statusCode === 423 || err.statusCode === 429) && retry < 5) {
-//         await sleep(random_bm());
-//         return fn();
-//     }
-//     throw err;
-// }
-
-
 async function pagination({tidId}) {
     console.log('[PAGINATION]', {tidId});
     let menuText;
@@ -104,7 +98,7 @@ async function pagination({tidId}) {
         let paginationResponse = await gotScraping({
             url: `${host}/truyen/truyen.aspx?tid=${tidId}&AspxAutoDetectCookieSupport=1`,
             headers: {...HeaderPagination},
-            retry: {limit: 5}
+            ...requestOptions
         });
         let {body} = paginationResponse;
         if (isDebug()) {
@@ -165,13 +159,12 @@ async function detailText({tidId, payload, contentTypePagination, pgTitle, sizeO
     }
 
     if (!detailBody) {
-        // todo connect ETIMEDOUT
         let detailResponse = await gotScraping({
             url: getDetailUrl(contentTypePagination),
             headers: {...HeaderDetail(tidId)},
             method: "POST",
             body: payload,
-            retry: {limit: 5}
+            ...requestOptions,
         });
         let {
             body,

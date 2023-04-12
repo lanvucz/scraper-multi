@@ -4,12 +4,13 @@ const cheerio = require("cheerio");
 const os = require('os');
 const path = require('path');
 const minimist = require('minimist');
-
+const Epub = require("epub-gen");
 
 let debug = false;
+let format;
 let requestOptions = {
     retry: {limit: 5},
-    timeout: { request: 120000 }
+    timeout: {request: 120000}
 }
 
 const host = 'http://vietnamthuquan.eu';
@@ -45,29 +46,68 @@ const HeaderDetail = (tid) => {
     };
 };
 
-
-async function bundleText({tidId, title}) {
-    console.log(`[bundle text] ${title || tidId}`);
-    let files = fs.readdirSync(`${__dirname}/data/${tidId}`).sort();
-    let text = '';
-    for (let f of files) {
-        if (f.match(/\.txt$/)) {
-            let p = path.join(`${__dirname}/data/${tidId}`, f);
-            let buffer = await fs.readFileSync(p);
-            text += buffer.toString();
-            text += os.EOL + os.EOL + os.EOL;
-        }
+async function bundle(data) {
+    let {tidId, title} = data;
+    let outputFormat = getFormat();
+    console.log(`[bundle] ${outputFormat} ${title || tidId}`);
+    if (outputFormat === 'txt') {
+        await bundleText(data);
+    } else if (outputFormat === 'epub') {
+        await bundleEpub(data);
     }
+}
 
-    await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, text, err => {
+async function bundleText({tidId, title, content}) {
+    console.log(`[bundle text] ${title || tidId}`);
+    // let files = fs.readdirSync(`${__dirname}/data/${tidId}`).sort();
+    // let text = '';
+    // for (let f of files) {
+    //     if (f.match(/\.txt$/)) {
+    //         let p = path.join(`${__dirname}/data/${tidId}`, f);
+    //         let buffer = await fs.readFileSync(p);
+    //         text += buffer.toString();
+    //         text += os.EOL + os.EOL + os.EOL;
+    //     }
+    // }
+
+    // await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, text, err => {
+    //     if (err) {
+    //         console.error(err);
+    //     }
+    // });
+    await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, content, err => {
         if (err) {
             console.error(err);
         }
     });
 }
 
+async function bundleEpub({tidId, title, author, coverPath, content: contentText}) {
+    console.log(`[bundle epub] ${title || tidId}`);
+    // let files = fs.readdirSync(`${__dirname}/data/${tidId}`).sort();
+
+    let content = contentText.split('--!!tach_noi_dung!!--').filter(v => v).map(data => {
+        return {data}
+    });
+    const option = {
+        title: title || tidId,
+        author: author || 'unknown',
+        cover: coverPath,
+        content
+    };
+
+    await new Epub(option, `${__dirname}/data/${title || tidId}.epub`).promise.then(
+        () => console.log("Ebook Generated Successfully!"),
+        err => console.error("Failed to generate Ebook because of ", err)
+    );
+}
+
 function isDebug() {
     return debug;
+}
+
+function getFormat() {
+    return format;
 }
 
 function getContentType(html) {
@@ -86,11 +126,13 @@ function getDetailUrl(contentType) {
 async function pagination({tidId}) {
     console.log('[PAGINATION]', {tidId});
     let menuText;
-    if (isDebug()) {
+    let paginationCachedFile = `${__dirname}/data/${tidId}/${tidId}.html`;
+    if (isDebug() && fs.existsSync(paginationCachedFile)) {
         try {
-            let buffer = await fs.readFileSync(`${__dirname}/data/${tidId}/${tidId}.html`);
+            let buffer = await fs.readFileSync(paginationCachedFile);
             menuText = buffer.toString();
         } catch (e) {
+            console.error('[PAGINATION] Failed to load cache!');
         }
     }
 
@@ -102,7 +144,7 @@ async function pagination({tidId}) {
         });
         let {body} = paginationResponse;
         if (isDebug()) {
-            await fs.writeFile(`${__dirname}/data/${tidId}/${tidId}.html`, body, (err) => {
+            await fs.writeFile(paginationCachedFile, body, (err) => {
                 if (err) {
                     console.error(err);
                 }
@@ -140,7 +182,42 @@ async function pagination({tidId}) {
     return {title, contentType, pageData};
 }
 
-async function detailText({tidId, payload, contentTypePagination, pgTitle, sizeOfIndex = 10}) {
+function getContent(detailBody, pgTitle = '') {
+    let data = detailBody.split('--!!tach_noi_dung!!--');
+    let $ = cheerio.load(data[1]);
+    let title = $('div.tuade h2 span.chuto40').text().trim() || pgTitle;
+    let author = $('span.tacgiaphaia').text().trim();
+    let content;
+
+    let outputFormat = getFormat();
+    if (outputFormat === 'txt') {
+        // ten truyen, tac gia, so chuong
+        let text = os.EOL + os.EOL + title + os.EOL + os.EOL + author + os.EOL + os.EOL;
+        let tieude = $('div.tieude0anh p span.chutieude').toArray();
+
+        for (let t of tieude) {
+            text += $(t).text().trim() + os.EOL;
+        }
+        // chuong truyen
+        $ = cheerio.load(data[2]);
+        let imgSrc = $('div#chuhoain img.noborder[src]:not([src=""])').attr('src');
+        if (imgSrc) {
+            let char = imgSrc.match(/cotich_(\w)\.png$/)?.[1];
+            if (char) {
+                text = text + char;
+            }
+        }
+        let truyen = data[2].replaceAll("<div style='height:10px;'></div>", os.EOL);
+        text += cheerio.load(truyen).text().trim();
+        text += os.EOL + os.EOL;
+        content = text;
+    } else if (outputFormat === 'epub') {
+        content = '<div>' + data[1] + data[2] + '</div>' + '--!!tach_noi_dung!!--';
+    }
+    return {title, author, content};
+}
+
+async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfIndex = 10}) {
     console.log(`[DETAIL] ${tidId}`, {payload, pgTitle});
 
     let m = payload.match(/tuaid=(\d+)&chuongid=(\d+)/);
@@ -150,11 +227,13 @@ async function detailText({tidId, payload, contentTypePagination, pgTitle, sizeO
 
     let detailBody;
 
-    if (isDebug()) {
+    let detailCachedFile = `${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.html`;
+    if (isDebug() && fs.existsSync(detailCachedFile)) {
         try {
-            let buffer = await fs.readFileSync(`${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.html`);
+            let buffer = await fs.readFileSync(detailCachedFile);
             detailBody = buffer.toString();
         } catch (e) {
+            console.error('[DETAIL] Failed to load cache!');
         }
     }
 
@@ -174,7 +253,7 @@ async function detailText({tidId, payload, contentTypePagination, pgTitle, sizeO
         detailBody = body;
 
         if (isDebug()) {
-            await fs.writeFile(`${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.html`, body, err => {
+            await fs.writeFile(detailCachedFile, body, err => {
                 if (err) {
                     console.error(err);
                 }
@@ -184,69 +263,76 @@ async function detailText({tidId, payload, contentTypePagination, pgTitle, sizeO
 
 
     let data = detailBody.split('--!!tach_noi_dung!!--');
+    let {title, author, content} = getContent(detailBody, pgTitle);
 
-    // ten truyen, tac gia, so chuong
-    let $ = cheerio.load(data[1]);
-    let title = $('div.tuade h2 span.chuto40').text().trim() || pgTitle;
-    let autor = $('span.tacgiaphaia').text().trim();
+    // // ten truyen, tac gia, so chuong
+    // let $ = cheerio.load(data[1]);
+    // let title = $('div.tuade h2 span.chuto40').text().trim() || pgTitle;
+    // let author = $('span.tacgiaphaia').text().trim();
+    //
+    // let text = os.EOL + os.EOL + title + os.EOL + os.EOL + author + os.EOL + os.EOL;
+    // let tieude = $('div.tieude0anh p span.chutieude').toArray();
+    //
+    // for (let t of tieude) {
+    //     text += $(t).text().trim() + os.EOL;
+    // }
 
-    let text = os.EOL + os.EOL + title + os.EOL + os.EOL + autor + os.EOL + os.EOL;
-    let tieude = $('div.tieude0anh p span.chutieude').toArray();
-
-    for (let t of tieude) {
-        text += $(t).text().trim() + os.EOL;
-    }
-
+    // cover
+    let coverPath;
     if (chuongid === '1') {
         // anh bia
         let m = data[0].match(/background:url\(([^)]+)\)/);
         let imgUrl = m?.[1];
         if (imgUrl) {
-            try {
-                let stream = await gotScraping({
-                    url: imgUrl,
-                    headers: {...HeaderDetail(tidId)},
-                    isStream: true
-                });
-                let buffer = await streamToBuffer(stream);
-                await fs.writeFile(`${__dirname}/data/${title || tidId}.jpg`, buffer, 'binary', err => {
-                    if (err) {
-                        console.error(err);
-                    }
-                });
-                console.log(`[DETAIL] ${tidId} Image ${title || tidId}.jpg saved`);
-            } catch (e) {
-                console.error(`[DETAIL] ${tidId} Image can not be saved!`)
-                console.error(e);
+            let cover = `${__dirname}/data/${title || tidId}.jpg`;
+            if (!fs.existsSync(cover)) {
+                try {
+                    let stream = await gotScraping({
+                        url: imgUrl,
+                        headers: {...HeaderDetail(tidId)},
+                        isStream: true
+                    });
+                    let buffer = await streamToBuffer(stream);
+                    await fs.writeFile(cover, buffer, 'binary', err => {
+                        if (err) {
+                            console.error(err);
+                        }
+                    });
+                    console.log(`[DETAIL] ${tidId} Image ${cover} saved`);
+                    coverPath = cover;
+                } catch (e) {
+                    console.error(`[DETAIL] ${tidId} Image can not be saved!`)
+                    console.error(e);
+                }
             }
         }
     }
 
 
     // chuong truyen
-    $ = cheerio.load(data[2]);
-    let imgSrc = $('div#chuhoain img.noborder[src]:not([src=""])').attr('src');
-    if (imgSrc) {
-        let char = imgSrc.match(/cotich_(\w)\.png$/)?.[1];
-        if (char) {
-            text = text + char;
-        }
-    }
-    let truyen = data[2].replaceAll("<div style='height:10px;'></div>", os.EOL);
-    text += cheerio.load(truyen).text().trim();
-    text += os.EOL + os.EOL;
-    await fs.writeFile(`${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.txt`, text, err => {
-        if (err) {
-            console.error(err);
-        }
-    });
-
+    // $ = cheerio.load(data[2]);
+    // let imgSrc = $('div#chuhoain img.noborder[src]:not([src=""])').attr('src');
+    // if (imgSrc) {
+    //     let char = imgSrc.match(/cotich_(\w)\.png$/)?.[1];
+    //     if (char) {
+    //         text = text + char;
+    //     }
+    // let truyen = data[2].replaceAll("<div style='height:10px;'></div>", os.EOL);
+    // text += cheerio.load(truyen).text().trim();
+    // text += os.EOL + os.EOL;
+    // await fs.writeFile(`${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.txt`, text, err => {
+    //     if (err) {
+    //         console.error(err);
+    //     }
+    // });
+    // }
+    return {title, author, coverPath, content};
 }
 
 
 async function startPage(tidId) {
-
-    const {pageData = [], title = '', contentType: contentTypePagination = null} = await pagination({tidId});
+    const {pageData = [], title: pgTitle = '', contentType: contentTypePagination = null} = await pagination({tidId});
+    let title = pgTitle;
     if (!contentTypePagination ||
         (contentTypePagination && !['moi', 'epub2', 'pdf', 'scan', 'audio'].includes(contentTypePagination))) {
         throw `Unsupported content type!!! ${contentTypePagination}`;
@@ -256,14 +342,32 @@ async function startPage(tidId) {
         console.warn(`${title || tidId} has empty content.`)
         return;
     }
-
+    let author, coverPath, content = '';
     let sizeOfIndex = `${pageData.length}`.length;
     for (let i = 0; i < pageData.length; i++) {
         let payload = pageData[i];
 
         // faster need to concurrency
         if (contentTypePagination === 'moi') {
-            await detailText({tidId, payload,contentTypePagination, pgTitle: title, sizeOfIndex});
+            let {author: authorI, coverPath: coverI, content: contentI, title: titleI} = await detail({
+                tidId,
+                payload,
+                contentTypePagination,
+                pgTitle: title,
+                sizeOfIndex
+            });
+            if (!author && authorI) {
+                author = authorI;
+            }
+            if (!coverPath && coverI) {
+                coverPath = coverI;
+            }
+            if (contentI) {
+                content += contentI;
+            }
+            if (!title && titleI) {
+                title = titleI;
+            }
         } else {
             // todo
             console.error('to be implemented');
@@ -273,7 +377,7 @@ async function startPage(tidId) {
     }
 
     if (contentTypePagination === 'moi') {
-        await bundleText({tidId, title});
+        await bundle({tidId, title, author, coverPath, content});
     }
 
 }
@@ -322,18 +426,20 @@ function sleep(ms) {
 
 async function main() {
 
-    let {tid: tidId, mode} = minimist(process.argv.slice(2));
+    let {tid: tidId, mode, format: outputFormat = 'epub'} = minimist(process.argv.slice(2));
     if (!tidId) {
         console.log("tid must be defined. For an example: npm run vnthuquan -- --tid 2qtqv3m3237nvnmnmntnvn31n343tq83a3q3m3237nvn");
         process.exit();
     }
 
     debug = mode === 'debug';
+    format = outputFormat;
 
-    if (!fs.existsSync(`${__dirname}/data/${tidId}`)) {
-        fs.mkdirSync(`${__dirname}/data/${tidId}`, {recursive: true});
+    if (isDebug()) {
+        if (!fs.existsSync(`${__dirname}/data/${tidId}`)) {
+            fs.mkdirSync(`${__dirname}/data/${tidId}`, {recursive: true});
+        }
     }
-
     await startPage(tidId);
 
 }

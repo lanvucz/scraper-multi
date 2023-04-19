@@ -1,4 +1,4 @@
-const {gotScraping} = require("got-scraping");
+const got = require('got')
 const fs = require("fs");
 const cheerio = require("cheerio");
 const os = require('os');
@@ -11,6 +11,8 @@ let requestOptions = {
     retry: {limit: 5},
     timeout: {request: 120000}
 }
+let getCover = true;
+const cwd = process.cwd();
 
 const host = 'http://vietnamthuquan.eu';
 const HeaderPagination = {
@@ -60,24 +62,24 @@ async function bundle(data) {
 
 async function bundleText({tidId, title, content}) {
     console.log(`[BUNDLE TXT] ${tidId}`, {title, format: 'txt'});
-    // let files = fs.readdirSync(`${__dirname}/data/${tidId}`).sort();
+    // let files = fs.readdirSync(`${cwd}/data/${tidId}`).sort();
     // let text = '';
     // for (let f of files) {
     //     if (f.match(/\.txt$/)) {
-    //         let p = path.join(`${__dirname}/data/${tidId}`, f);
+    //         let p = path.join(`${cwd}/data/${tidId}`, f);
     //         let buffer = await fs.readFileSync(p);
     //         text += buffer.toString();
     //         text += os.EOL + os.EOL + os.EOL;
     //     }
     // }
 
-    // await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, text, err => {
+    // await fs.writeFile(`${cwd}/data/${title || tidId}.txt`, text, err => {
     //     if (err) {
     //         console.error(err);
     //     }
     // });
     let text = content.join('');
-    await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, text, err => {
+    await fs.writeFile(`${cwd}/data/${title || tidId}.txt`, text, err => {
         if (err) {
             console.error(err);
         }
@@ -89,13 +91,13 @@ async function bundleEpub({tidId, title, author, coverPath, content}) {
 
     const option = {
         title: title || tidId,
-        author: author ? author.trim().split(/\s/).filter(v =>v).map(v => v.charAt(0).toUpperCase() + v.slice(1)).join(' ') :  'unknown',
+        author: author ? author.trim().split(/\s/).filter(v => v).map(v => v.charAt(0).toUpperCase() + v.slice(1)).join(' ') : 'unknown',
         publisher: 'vnthuquan',
         ...(coverPath && {cover: coverPath}),
         content
     };
 
-    await new Epub(option, `${__dirname}/data/${title || tidId}.epub`).promise.then(
+    await new Epub(option, `${cwd}/data/${title || tidId}.epub`).promise.then(
         () => console.log("Ebook Generated Successfully!"),
         err => console.error("Failed to generate Ebook because of ", err)
     );
@@ -119,13 +121,13 @@ function getDetailUrl(contentType) {
         timestamp.substring(0, 3) +
         "." +
         timestamp.substring(4, timestamp.length);
-    return `${host}/truyen/chuonghoi_${contentType}.aspx?&rand=${rand}`;
+    return `${host}/truyen/chuonghoi_${contentType}.aspx?=&rand=${rand}`;
 }
 
 async function pagination({tidId}) {
     console.log('[PAGINATION]', tidId);
     let menuText;
-    let paginationCachedFile = `${__dirname}/data/${tidId}/${tidId}.html`;
+    let paginationCachedFile = `${cwd}/data/${tidId}/${tidId}.html`;
     if (isDebug() && fs.existsSync(paginationCachedFile)) {
         try {
             let buffer = await fs.readFileSync(paginationCachedFile);
@@ -136,8 +138,8 @@ async function pagination({tidId}) {
     }
 
     if (!menuText) {
-        let paginationResponse = await gotScraping({
-            url: `${host}/truyen/truyen.aspx?tid=${tidId}&AspxAutoDetectCookieSupport=1`,
+        let paginationUrl = `${host}/truyen/truyen.aspx?tid=${tidId}&AspxAutoDetectCookieSupport=1`;
+        let paginationResponse = await got.get(paginationUrl, {
             headers: {...HeaderPagination},
             ...requestOptions
         });
@@ -168,12 +170,16 @@ async function pagination({tidId}) {
 
     if (pageData.length === 0) {
         let oneChapter = menuText.match(/noidung1\('(tuaid=(\d+)&chuongid=)'\)/)?.[1];
-        pageData.push(oneChapter + '1');
+        // pageData.push(oneChapter + '1');
+        pageData.push(oneChapter);
     }
 
     let contentType = getContentType(menuText);
 
-    console.log('[PAGINATION]', tidId, 'Found', {contentType, title, pageData: JSON.stringify(pageData)});
+    console.log('[PAGINATION]', tidId, 'Found', {
+        url: `${host}/truyen/truyen.aspx?tid=${tidId}&AspxAutoDetectCookieSupport=1`,
+        contentType, title, pageData: JSON.stringify(pageData)
+    });
     // if (isDebug()) {
     //     pageData = [pageData[0], pageData[1], pageData[2]];
     //     console.debug('Debug', {title, pageData});
@@ -187,7 +193,7 @@ function getDetailContent(detailBody, pgTitle = '') {
     let title = $('div.tuade h2 span.chuto40').text().trim() || pgTitle;
     let author = $('span.tacgiaphaia').text().trim();
 
-    let chapterTitle = $('div.tieude0anh p span.chutieude').toArray().slice(-2).map(t => $(t).text().trim()).filter(v =>v).join(' - ');
+    let chapterTitle = $('div.tieude0anh p span.chutieude').toArray().slice(-2).map(t => $(t).text().trim()).filter(v => v).join(' - ');
 
     let content;
 
@@ -221,7 +227,7 @@ function getDetailContent(detailBody, pgTitle = '') {
             let char = imgSrc.match(/cotich_(\w)\.png$/)?.[1];
             if (char) {
                 $('div#chuhoain').remove();
-                let text = $('body').html().replace('class="chuhoavn"> ', 'class="chuhoavn">'+char );
+                let text = $('body').html().replace('class="chuhoavn"> ', 'class="chuhoavn">' + char);
                 $ = cheerio.load(text);
             }
         }
@@ -229,8 +235,8 @@ function getDetailContent(detailBody, pgTitle = '') {
         let body = $('body').html();
 
         content = {
-            ... (chapterTitle && {title: chapterTitle}),
-            data:  '<div> <div style="padding: 3px 0 45px 0;">' + data[1] +'</div>'  + body + '</div>'
+            ...(chapterTitle && {title: chapterTitle}),
+            data: '<div> <div style="padding: 3px 0 45px 0;">' + data[1] + '</div>' + body + '</div>'
         };
     }
     return {title, author, content};
@@ -239,14 +245,14 @@ function getDetailContent(detailBody, pgTitle = '') {
 async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfIndex = 10}) {
     console.log(`[DETAIL] ${tidId}`, {payload, pgTitle});
 
-    let m = payload.match(/tuaid=(\d+)&chuongid=(\d+)/);
+    let m = payload.match(/tuaid=(\d+)&chuongid=(\d+|)/);
     let tuaid = m[1];
-    let chuongid = m[2];
+    let chuongid = m[2] || '1';
     let pageIndex = `${chuongid}`.padStart(sizeOfIndex, 0);
 
     let detailBody;
 
-    let detailCachedFile = `${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.html`;
+    let detailCachedFile = `${cwd}/data/${tidId}/${tuaid}_${pageIndex}.html`;
     if (isDebug() && fs.existsSync(detailCachedFile)) {
         try {
             let buffer = await fs.readFileSync(detailCachedFile);
@@ -257,18 +263,19 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
     }
 
     if (!detailBody) {
-        let detailResponse = await gotScraping({
-            url: getDetailUrl(contentTypePagination),
+        let detailUrl = getDetailUrl(contentTypePagination);
+
+        let detailResponse = await got.post(detailUrl, {
             headers: {...HeaderDetail(tidId)},
-            method: "POST",
             body: payload,
             ...requestOptions,
         });
         let {
-            body,
             statusCode,
+            body
         } = detailResponse;
-        console.debug(`[DETAIL] ${tidId}`, {payload, statusCode});
+
+        console.debug(`[DETAIL] ${tidId}`, {url: detailUrl, payload, statusCode});
         detailBody = body;
 
         if (isDebug()) {
@@ -284,30 +291,18 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
     let data = detailBody.split('--!!tach_noi_dung!!--');
     let {title, author, content} = getDetailContent(detailBody, pgTitle);
 
-    // // ten truyen, tac gia, so chuong
-    // let $ = cheerio.load(data[1]);
-    // let title = $('div.tuade h2 span.chuto40').text().trim() || pgTitle;
-    // let author = $('span.tacgiaphaia').text().trim();
-    //
-    // let text = os.EOL + os.EOL + title + os.EOL + os.EOL + author + os.EOL + os.EOL;
-    // let tieude = $('div.tieude0anh p span.chutieude').toArray();
-    //
-    // for (let t of tieude) {
-    //     text += $(t).text().trim() + os.EOL;
-    // }
 
     // cover
     let coverPath;
-    if (chuongid === '1') {
+    if (chuongid === '1' && getCover) {
         // anh bia
         let m = data[0].match(/background:url\(([^)]+)\)/);
         let imgUrl = m?.[1];
         if (imgUrl) {
-            let cover = `${__dirname}/data/${title || tidId}.jpg`;
+            let cover = `${cwd}/data/${title || tidId}.jpg`;
             if (!fs.existsSync(cover)) {
                 try {
-                    let stream = await gotScraping({
-                        url: imgUrl,
+                    let stream = await got.stream(imgUrl, {
                         headers: {...HeaderDetail(tidId)},
                         isStream: true
                     });
@@ -328,23 +323,6 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
     }
 
 
-    // chuong truyen
-    // $ = cheerio.load(data[2]);
-    // let imgSrc = $('div#chuhoain img.noborder[src]:not([src=""])').attr('src');
-    // if (imgSrc) {
-    //     let char = imgSrc.match(/cotich_(\w)\.png$/)?.[1];
-    //     if (char) {
-    //         text = text + char;
-    //     }
-    // let truyen = data[2].replaceAll("<div style='height:10px;'></div>", os.EOL);
-    // text += cheerio.load(truyen).text().trim();
-    // text += os.EOL + os.EOL;
-    // await fs.writeFile(`${__dirname}/data/${tidId}/${tuaid}_${pageIndex}.txt`, text, err => {
-    //     if (err) {
-    //         console.error(err);
-    //     }
-    // });
-    // }
     return {title, author, coverPath, content};
 }
 
@@ -445,18 +423,18 @@ function sleep(ms) {
 
 async function main() {
 
-    let {tid: tidId, mode, format: outputFormat = 'epub'} = minimist(process.argv.slice(2));
+    let {tid: tidId, debug: modeDebug = false, format: outputFormat = 'epub'} = minimist(process.argv.slice(2));
     if (!tidId) {
         console.log("tid must be defined. For an example: npm run vnthuquan -- --tid 2qtqv3m3237nvnmnmntnvn31n343tq83a3q3m3237nvn");
         process.exit();
     }
 
-    debug = mode === 'debug';
+    debug = !!modeDebug;
     format = outputFormat;
 
     if (isDebug()) {
-        if (!fs.existsSync(`${__dirname}/data/${tidId}`)) {
-            fs.mkdirSync(`${__dirname}/data/${tidId}`, {recursive: true});
+        if (!fs.existsSync(`${cwd}/data/${tidId}`)) {
+            fs.mkdirSync(`${cwd}/data/${tidId}`, {recursive: true});
         }
     }
     await startPage(tidId);

@@ -2,7 +2,6 @@ const {gotScraping} = require("got-scraping");
 const fs = require("fs");
 const cheerio = require("cheerio");
 const os = require('os');
-const path = require('path');
 const minimist = require('minimist');
 const Epub = require("epub-gen");
 
@@ -49,16 +48,18 @@ const HeaderDetail = (tid) => {
 async function bundle(data) {
     let {tidId, title} = data;
     let outputFormat = getFormat();
-    console.log(`[bundle] ${outputFormat} ${title || tidId}`);
+    console.log(`[BUNDLE] ${tidId}`, {title, format: outputFormat});
     if (outputFormat === 'txt') {
         await bundleText(data);
     } else if (outputFormat === 'epub') {
         await bundleEpub(data);
+    } else {
+        console.error(`[BUNDLE] ${tidId} Format ${outputFormat} not supported!`, {title, format: outputFormat})
     }
 }
 
 async function bundleText({tidId, title, content}) {
-    console.log(`[bundle text] ${title || tidId}`);
+    console.log(`[BUNDLE TXT] ${tidId}`, {title, format: 'txt'});
     // let files = fs.readdirSync(`${__dirname}/data/${tidId}`).sort();
     // let text = '';
     // for (let f of files) {
@@ -75,24 +76,22 @@ async function bundleText({tidId, title, content}) {
     //         console.error(err);
     //     }
     // });
-    await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, content, err => {
+    let text = content.join('');
+    await fs.writeFile(`${__dirname}/data/${title || tidId}.txt`, text, err => {
         if (err) {
             console.error(err);
         }
     });
 }
 
-async function bundleEpub({tidId, title, author, coverPath, content: contentText}) {
-    console.log(`[bundle epub] ${title || tidId}`);
-    // let files = fs.readdirSync(`${__dirname}/data/${tidId}`).sort();
+async function bundleEpub({tidId, title, author, coverPath, content}) {
+    console.log(`[BUNDLE EPUB] ${tidId}`, {title});
 
-    let content = contentText.split('--!!tach_noi_dung!!--').filter(v => v).map(data => {
-        return {data}
-    });
     const option = {
         title: title || tidId,
-        author: author || 'unknown',
-        cover: coverPath,
+        author: author ? author.trim().split(/\s/).filter(v =>v).map(v => v.charAt(0).toUpperCase() + v.slice(1)).join(' ') :  'unknown',
+        publisher: 'vnthuquan',
+        ...(coverPath && {cover: coverPath}),
         content
     };
 
@@ -124,7 +123,7 @@ function getDetailUrl(contentType) {
 }
 
 async function pagination({tidId}) {
-    console.log('[PAGINATION]', {tidId});
+    console.log('[PAGINATION]', tidId);
     let menuText;
     let paginationCachedFile = `${__dirname}/data/${tidId}/${tidId}.html`;
     if (isDebug() && fs.existsSync(paginationCachedFile)) {
@@ -174,19 +173,22 @@ async function pagination({tidId}) {
 
     let contentType = getContentType(menuText);
 
-    console.log('Found', {contentType, title, pageData: JSON.stringify(pageData)});
+    console.log('[PAGINATION]', tidId, 'Found', {contentType, title, pageData: JSON.stringify(pageData)});
     // if (isDebug()) {
-    //     pageData = [pageData[0]];
+    //     pageData = [pageData[0], pageData[1], pageData[2]];
     //     console.debug('Debug', {title, pageData});
     // }
     return {title, contentType, pageData};
 }
 
-function getContent(detailBody, pgTitle = '') {
+function getDetailContent(detailBody, pgTitle = '') {
     let data = detailBody.split('--!!tach_noi_dung!!--');
     let $ = cheerio.load(data[1]);
     let title = $('div.tuade h2 span.chuto40').text().trim() || pgTitle;
     let author = $('span.tacgiaphaia').text().trim();
+
+    let chapterTitle = $('div.tieude0anh p span.chutieude').toArray().slice(-2).map(t => $(t).text().trim()).filter(v =>v).join(' - ');
+
     let content;
 
     let outputFormat = getFormat();
@@ -212,7 +214,24 @@ function getContent(detailBody, pgTitle = '') {
         text += os.EOL + os.EOL;
         content = text;
     } else if (outputFormat === 'epub') {
-        content = '<div>' + data[1] + data[2] + '</div>' + '--!!tach_noi_dung!!--';
+        $ = cheerio.load(data[2]);
+        let img = $('div#chuhoain img.noborder[src]:not([src=""])');
+        let imgSrc = img.attr('src');
+        if (imgSrc) {
+            let char = imgSrc.match(/cotich_(\w)\.png$/)?.[1];
+            if (char) {
+                $('div#chuhoain').remove();
+                let text = $('body').html().replace('class="chuhoavn"> ', 'class="chuhoavn">'+char );
+                $ = cheerio.load(text);
+            }
+        }
+        $('img[src]:not([src=""])').remove();
+        let body = $('body').html();
+
+        content = {
+            ... (chapterTitle && {title: chapterTitle}),
+            data:  '<div> <div style="padding: 3px 0 45px 0;">' + data[1] +'</div>'  + body + '</div>'
+        };
     }
     return {title, author, content};
 }
@@ -233,7 +252,7 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
             let buffer = await fs.readFileSync(detailCachedFile);
             detailBody = buffer.toString();
         } catch (e) {
-            console.error('[DETAIL] Failed to load cache!');
+            console.error(`[DETAIL] ${tidId} Failed to load cache!`);
         }
     }
 
@@ -249,7 +268,7 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
             body,
             statusCode,
         } = detailResponse;
-        console.debug({tidId, payload, statusCode});
+        console.debug(`[DETAIL] ${tidId}`, {payload, statusCode});
         detailBody = body;
 
         if (isDebug()) {
@@ -263,7 +282,7 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
 
 
     let data = detailBody.split('--!!tach_noi_dung!!--');
-    let {title, author, content} = getContent(detailBody, pgTitle);
+    let {title, author, content} = getDetailContent(detailBody, pgTitle);
 
     // // ten truyen, tac gia, so chuong
     // let $ = cheerio.load(data[1]);
@@ -335,14 +354,14 @@ async function startPage(tidId) {
     let title = pgTitle;
     if (!contentTypePagination ||
         (contentTypePagination && !['moi', 'epub2', 'pdf', 'scan', 'audio'].includes(contentTypePagination))) {
-        throw `Unsupported content type!!! ${contentTypePagination}`;
+        throw `[START] ${tidId} ${title} Unsupported content type!!! ${contentTypePagination}`;
     }
 
     if (pageData.length === 0) {
-        console.warn(`${title || tidId} has empty content.`)
+        console.warn(`[START] ${tidId} ${title} has empty content.`)
         return;
     }
-    let author, coverPath, content = '';
+    let author, coverPath, content = [];
     let sizeOfIndex = `${pageData.length}`.length;
     for (let i = 0; i < pageData.length; i++) {
         let payload = pageData[i];
@@ -363,14 +382,14 @@ async function startPage(tidId) {
                 coverPath = coverI;
             }
             if (contentI) {
-                content += contentI;
+                content.push(contentI);
             }
             if (!title && titleI) {
                 title = titleI;
             }
         } else {
             // todo
-            console.error('to be implemented');
+            console.error('[START] to be implemented', contentTypePagination);
         }
 
         await sleep(random_bm());

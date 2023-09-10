@@ -20,6 +20,13 @@ npm run vnthuquan -- --tid insert_tid_here
 --format    epub txt : choose a format to be generated. Default epub
 ```
 
+```
+npm run vnthuquan http://vietnamthuquan.eu/truyen/truyen.aspx?tid=2qtqv3m3237n1nvntnnn1n31n343tq83a3q3m3237nvn
+```
+
+```
+npm run vnthuquan http://vietnamthuquan.eu/truyen/truyen.aspx?tid=2qtqv3m3237n1nvntnnn1n31n343tq83a3q3m3237nvn -- --debug
+```
 ### Executable
 ##### [Node Single executable applications](https://nodejs.org/api/single-executable-applications.html)
 

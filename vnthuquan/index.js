@@ -4,6 +4,7 @@ const cheerio = require("cheerio");
 const os = require('os');
 const minimist = require('minimist');
 const Epub = require("epub-gen");
+const { createCanvas } = require("canvas");
 
 let debug = false;
 let format;
@@ -48,7 +49,13 @@ const HeaderDetail = (tid) => {
 };
 
 async function bundle(data) {
-    let {tidId, title} = data;
+    let {tidId, title, author} = data;
+    if (title) {
+        data.title = title.replace(/"/g, '');
+    }
+    if (author) {
+        data.author = author.trim().split(/\s/).filter(v => v).map(v => v.charAt(0).toUpperCase() + v.slice(1)).join(' ');
+    }
     let outputFormat = getFormat();
     console.log(`[BUNDLE] ${tidId}`, {title, format: outputFormat});
     if (outputFormat === 'txt') {
@@ -79,28 +86,70 @@ async function bundleText({tidId, title, content}) {
     //     }
     // });
     let text = content.join('');
-    await fs.writeFile(`${cwd}/data/${title || tidId}.txt`, text, err => {
+    await fs.writeFile(`${cwd}/${title || tidId}.txt`, text, err => {
         if (err) {
             console.error(err);
         }
     });
 }
+async function genarateCover({title, author}){
+    let WIDTH = 600;
+    let HEIGHT = 800;
+
+    let canvas = createCanvas(WIDTH, HEIGHT);
+    let ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#f2f2f2";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = "#222222";
+    ctx.font = "50px Arial";
+    let titleArr = title.split(/\s/);
+    let titleBreaks = [];
+    let s = [];
+    for (let w of titleArr) {
+        s.push(w);
+        if (s.join(' ').length > 20){
+            s.pop();
+            titleBreaks.push(s.join(' '));
+            s = [w];
+        }
+    }
+    titleBreaks.push(s.join(' '));
+    let positionY = 200;
+    for (let tb of titleBreaks) {
+        ctx.fillText(tb, 50, positionY);
+        positionY += 60;
+    }
+    ctx.font = "32px Arial";
+    ctx.fillText(author, 100, 450);
+
+    let buffer = canvas.toBuffer("image/png");
+    fs.writeFileSync(title + ".png", buffer);
+    return title + ".png";
+}
 
 async function bundleEpub({tidId, title, author, coverPath, content}) {
     console.log(`[BUNDLE EPUB] ${tidId}`, {title});
-
+    let coverGenerated = false;
+    if (!coverPath){
+        coverPath = await genarateCover({title, author});
+        coverGenerated = true;
+    }
     const option = {
         title: title || tidId,
-        author: author ? author.trim().split(/\s/).filter(v => v).map(v => v.charAt(0).toUpperCase() + v.slice(1)).join(' ') : 'unknown',
+        author: author || 'unknown',
         publisher: 'vnthuquan',
         ...(coverPath && {cover: coverPath}),
         content
     };
 
-    await new Epub(option, `${cwd}/data/${title || tidId}.epub`).promise.then(
+    await new Epub(option, `${cwd}/${title || tidId}.epub`).promise.then(
         () => console.log("Ebook Generated Successfully!"),
         err => console.error("Failed to generate Ebook because of ", err)
     );
+    if (coverGenerated) {
+        fs.unlinkSync(coverPath);
+    }
 }
 
 function isDebug() {
@@ -299,7 +348,7 @@ async function detail({tidId, payload, contentTypePagination, pgTitle, sizeOfInd
         let m = data[0].match(/background:url\(([^)]+)\)/);
         let imgUrl = m?.[1];
         if (imgUrl) {
-            let cover = `${cwd}/data/${title || tidId}.jpg`;
+            let cover = `${cwd}/${title || tidId}.jpg`;
             if (!fs.existsSync(cover)) {
                 try {
                     let stream = await got.stream(imgUrl, {
@@ -420,10 +469,23 @@ function sleep(ms) {
     });
 }
 
+function findTid(arr) {
+    for (let v of arr){
+        try {
+            return (new URL(v)).searchParams.get('tid');
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
 
 async function main() {
 
     let {tid: tidId, debug: modeDebug = false, format: outputFormat = 'epub'} = minimist(process.argv.slice(2));
+    if (!tidId) {
+        tidId =findTid(process.argv.slice(2))
+    }
     if (!tidId) {
         console.log("tid must be defined. For an example: npm run vnthuquan -- --tid 2qtqv3m3237nvnmnmntnvn31n343tq83a3q3m3237nvn");
         process.exit();

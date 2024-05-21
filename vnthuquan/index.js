@@ -5,6 +5,7 @@ const os = require('os');
 const minimist = require('minimist');
 const Epub = require("epub-gen");
 const { createCanvas } = require("canvas");
+const path = require('path');
 
 let debug = false;
 let format;
@@ -92,7 +93,7 @@ async function bundleText({tidId, title, content}) {
         }
     });
 }
-async function genarateCover({title, author}){
+async function generateCover({title, author, chapterCount}){
     let WIDTH = 600;
     let HEIGHT = 800;
 
@@ -123,33 +124,42 @@ async function genarateCover({title, author}){
     ctx.font = "32px Arial";
     ctx.fillText(author, 100, 450);
 
+    ctx.fillText("Chapters: " + chapterCount, 50, 600);
+
     let buffer = canvas.toBuffer("image/png");
     fs.writeFileSync(title + ".png", buffer);
-    return title + ".png";
+    let coverPath = path.join(cwd, `${title}.png`);
+    return coverPath;
 }
 
 async function bundleEpub({tidId, title, author, coverPath, content}) {
     console.log(`[BUNDLE EPUB] ${tidId}`, {title});
-    let coverGenerated = false;
-    if (!coverPath){
-        coverPath = await genarateCover({title, author});
-        coverGenerated = true;
-    }
+//    let coverGenerated = false;
+        coverPath = await generateCover({title, author, chapterCount: content.length});
+//    if (!coverPath){
+//        coverGenerated = true;
+//    }
+
+
     const option = {
         title: title || tidId,
         author: author || 'unknown',
         publisher: 'vnthuquan',
         ...(coverPath && {cover: coverPath}),
+        css: `.tacgiaphaia{color:#666633; font-size:1.8em; text-transform: capitalize; float:right;  text-shadow: 4px 4px 4px #c0c2a2;}
+.tacgiaphai{font-style:italic; font-size:1.25em; margin:0.5em 0 0; padding-bottom:10px; clear:both; color:#5B776E;}
+`,
         content
     };
 
-    await new Epub(option, `${cwd}/${title || tidId}.epub`).promise.then(
+    await new Epub(option, path.join(cwd, `${title || tidId}.epub`)).promise.then(
         () => console.log("Ebook Generated Successfully!"),
-        err => console.error("Failed to generate Ebook because of ", err)
+        err => console.error("Failed to generate Ebook", err)
     );
-    if (coverGenerated) {
-        fs.unlinkSync(coverPath);
-    }
+//    if (coverPath) {
+//        // fixme gen-epub do not do correctly metadata for cover image. Investigate
+////         fs.unlinkSync(coverPath);
+//    }
 }
 
 function isDebug() {
@@ -486,20 +496,46 @@ async function main() {
     if (!tidId) {
         tidId =findTid(process.argv.slice(2))
     }
+    let tidIds = tidId ? [tidId] : [];
     if (!tidId) {
+        let filePath = path.join(cwd, process.argv.slice(2)[0]);
+        if (fs.existsSync(filePath)){
+            console.log(filePath);
+//            let data = fs.openSync(filePath, 'r');
+//            console.log(data);
+             let input = (fs.readFileSync(filePath))
+                            .toString().trim()
+                            .split(/\r?\n/)
+             if (input) {
+                for (let v of input) {
+                    try {
+                        let tid = (new URL(v)).searchParams.get('tid');
+                         tidIds.push(tid);
+                    } catch {
+                        continue;
+                    }
+                }
+             }
+        }
+    }
+//console.log(tidIds)
+
+    if (!tidIds) {
         console.log("tid must be defined. For an example: npm run vnthuquan -- --tid 2qtqv3m3237nvnmnmntnvn31n343tq83a3q3m3237nvn");
         process.exit();
     }
 
     debug = !!modeDebug;
     format = outputFormat;
-
-    if (isDebug()) {
-        if (!fs.existsSync(`${cwd}/data/${tidId}`)) {
-            fs.mkdirSync(`${cwd}/data/${tidId}`, {recursive: true});
+    for (let tid of tidIds) {
+        if (isDebug()) {
+            let dirPath = path.join(cwd, 'data', `${tid}`);
+            if (!fs.existsSync(dirPath)) {
+                fs.mkdirSync(dirPath, {recursive: true});
+            }
         }
+        await startPage(tid);
     }
-    await startPage(tidId);
 
 }
 

@@ -13,6 +13,7 @@ pkg -v
 5.8.1
 ```
 #### vnthuquan
+1.
 ```
 npm run vnthuquan -- --tid insert_tid_here
 --tid       2qtqv3m3237nvntnmn4n4n31n343tq83a3q3m3237nvn from url https://vnthuquan.net/truyen/truyen.aspx?tid=2qtqv3m3237nvntnmn4n4n31n343tq83a3q3m3237nvn
@@ -20,6 +21,17 @@ npm run vnthuquan -- --tid insert_tid_here
 --format    epub txt : choose a format to be generated. Default epub
 ```
 
+2.
+input.txt
+```
+http://vietnamthuquan.eu/truyen/truyen.aspx?tid=2qtqv3m3237n1ntnmn0n0n31n343tq83a3q3m3237nvn
+http://vietnamthuquan.eu/truyen/truyen.aspx?tid=2qtqv3m3237n1ntn4nmn4n31n343tq83a3q3m3237nvn
+```
+
+```
+npm run vnthuquan input.txt
+```
+3.
 ```
 npm run vnthuquan http://vietnamthuquan.eu/truyen/truyen.aspx?tid=2qtqv3m3237n1nvntnnn1n31n343tq83a3q3m3237nvn
 ```
